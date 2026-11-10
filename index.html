@@ -1,0 +1,699 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Checkers</title>
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: none; background: #10261d; }
+  body { font: 15px/1.35 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; color: #f6efe2; user-select: none; -webkit-user-select: none; }
+  canvas { display: block; width: 100vw; height: 100vh; height: 100dvh; touch-action: none; cursor: pointer; }
+  .hud { position: fixed; pointer-events: none; }
+  .bar { position: fixed; left: max(12px, env(safe-area-inset-left)); display: flex; align-items: center; gap: 9px; padding: 5px 14px 5px 5px; border-radius: 999px;
+         background: #08140fcc; font-weight: 650; max-width: calc(100vw - 150px); white-space: nowrap; transition: box-shadow .25s; pointer-events: none; }
+  .bar.turn { box-shadow: 0 0 0 2px #ffcc4d, 0 0 20px #ffcc4d66; }
+  .bar .sw { width: 30px; height: 30px; border-radius: 50%; flex: none; box-shadow: inset 0 -4px 0 #0005, 0 0 0 3px var(--p); }
+  .bar .nm { overflow: hidden; text-overflow: ellipsis; }
+  .bar .tag { font-size: 12px; font-weight: 600; opacity: .65; }
+  .bar .left { font-size: 12px; opacity: .8; }
+  .bar .pts { font-size: 16px; font-weight: 800; color: #ffcc4d; }
+  #top { top: max(12px, env(safe-area-inset-top)); }
+  #bottom { bottom: calc(max(10px, env(safe-area-inset-bottom)) + 24px); }
+  #status { top: calc(max(12px, env(safe-area-inset-top)) + 50px); left: 0; right: 0; text-align: center; font-weight: 800; font-size: 18px; text-shadow: 0 2px 6px #000c; padding: 0 12px; }
+  #toast { top: calc(max(12px, env(safe-area-inset-top)) + 80px); left: 50%; transform: translateX(-50%); padding: 6px 14px; border-radius: 999px;
+           background: #000b; font-size: 14px; transition: opacity .4s; white-space: nowrap; }
+  #watch { top: max(18px, env(safe-area-inset-top)); right: max(14px, env(safe-area-inset-right)); font-size: 12px; opacity: .75; text-align: right; max-width: 120px; }
+  #net { bottom: max(6px, env(safe-area-inset-bottom)); left: 0; right: 0; text-align: center; font-size: 12px; opacity: .7; }
+  #act { position: fixed; right: max(12px, env(safe-area-inset-right)); bottom: calc(max(10px, env(safe-area-inset-bottom)) + 22px); min-width: 108px; min-height: 46px;
+         border-radius: 14px; border: 1px solid #ffffff33; background: #ffffff1a; color: #fff; font: 700 15px system-ui, sans-serif; cursor: pointer; }
+  #act.go { background: #ffcc4d; color: #2a1d00; border: 0; }
+  #act.warn { background: #e2555a; border: 0; }
+  #over { position: fixed; inset: 0; display: grid; place-items: center; background: #0008; }
+  #over[hidden], #act[hidden] { display: none; }
+  .card { box-sizing: border-box; width: min(380px, calc(100vw - 32px)); max-height: 86vh; overflow: auto; padding: 20px; border-radius: 18px;
+          background: #1b3a2d; border: 1px solid #ffffff22; text-align: center; }
+  .card h2 { margin: 0; font-size: 28px; } .card p { margin: 4px 0 10px; opacity: .85; }
+  .card h3 { margin: 6px 0 4px; font-size: 13px; color: #ffcc4d; text-align: left; }
+  .card ol { text-align: left; margin: 0 0 12px; padding-left: 24px; font-size: 14px; min-height: 30px; }
+  .card li span { float: right; }
+  .card button { width: 100%; min-height: 48px; border-radius: 12px; border: 0; font: 800 16px system-ui, sans-serif; cursor: pointer; margin-top: 8px; }
+  #again { background: #ffcc4d; color: #2a1d00; } #look { background: #ffffff1a; color: #fff; }
+  #next { font-size: 12px; opacity: .6; margin: 8px 0 0; }
+  .hide { display: none !important; }
+</style>
+<script src="https://cdn.multiplayeragent.com/sdk/mp.global.js"></script>
+</head>
+<body>
+<canvas id="game"></canvas>
+<div class="bar" id="top"></div>
+<div class="bar" id="bottom"></div>
+<div class="hud" id="status"></div>
+<div class="hud" id="toast" style="opacity:0"></div>
+<div class="hud" id="watch"></div>
+<div class="hud" id="net">Connecting…</div>
+<button id="act" hidden>Resign</button>
+<div id="over" hidden><div class="card">
+  <h2 id="overTitle"></h2><p id="overWhy"></p>
+  <h3>Most wins</h3><ol id="board"><li>Loading…</li></ol>
+  <button id="again">Play again</button><button id="look">Look at the board</button>
+  <p id="next"></p>
+</div></div>
+<script>
+/* ═══ CHECKERS · a Multiplayer Agent starter ═══════════════════════════════════════════
+ * Classic 8×8 checkers: jumps are forced, chain them in one turn, reach the far side to be
+ * crowned. Turn-based, 2 players; anyone else watches; a bot plays when you're alone.
+ *
+ * WHERE THINGS ARE (search for the "── " headers):
+ *   CONFIG ........ the bot, timings, colors, the leaderboard
+ *   CONNECTION .... MP_CONNECT, joining, the offline room, who is host
+ *   RULES ......... the board, legal moves (forced jumps, multi-jumps, kings), the end
+ *   BOT ........... how the bot picks a move (a few moves deep, follows jumps to the end)
+ *   GAME (HOST) ... seats, checking and applying moves, bot turns, results, the next game.
+ *                   Only the host writes the shared `game` field.
+ *   PIECES ........ sliding and hopping pieces, captures, crowns, sparks, sounds
+ *   DRAW .......... layout, the board, highlights, the pieces
+ *   MY MOVES ...... picking a piece, its landing dots, multi-jumps, sending a move
+ *   HUD & RESULTS . player bars, status, results card, leaderboard
+ *   INPUT / LOOP .. taps, drags and keys, the main loop
+ *
+ * HOW THE MULTIPLAYER WORKS (a relay room: no server code, the HOST's browser runs the rules):
+ *   - The whole game lives in ONE shared field, `game`: {id, v, cells, first, ply, last,
+ *     seats, score, quiet, at, res, why, endsAt}. `cells` is 64 characters ("." empty,
+ *     "r"/"R" red man/king, "w"/"W" white man/king). `last` is the last move as a list of
+ *     squares (a multi-jump has several). `seats` = [red, white]: a sessionId or "bot".
+ *     Only the HOST writes it, and `v` goes up on every write.
+ *   - The HOST is the lowest sessionId among live players (heartbeat seen in the last 3s),
+ *     worked out every frame. It checks every move against the rules, plays the bot's
+ *     moves, hands seats to waiting players and ends the game. A new host carries on.
+ *   - Each player writes its OWN entity: `n` (name), `c` (color), `hb` (heartbeat).
+ *   - Players send intents to the host: "move" {g, ply, p: [squares]}, "resign" {g} and
+ *     "again" {g}. The host never gets its own sends, so it applies its own moves directly.
+ *   - The first two players take the seats. A seat whose player is gone for 10s goes to the
+ *     bot; a waiting player takes a bot's seat, even mid-game. After a win, the loser hands
+ *     the seat to someone who is waiting (winner stays on).
+ *   - ?attract plays offline, bot against bot (the preview video is recorded from it).
+ *   - Leaderboard "wins": +1 for each game a player wins, shown on the results card.
+ */
+
+// ── CONFIG ──────────────────────────────────────────────────────────────────────────
+const CONFIG = {
+  botName: "Checkbot",
+  botThinkMs: 900,        // the bot waits this long before it moves
+  botDepth: 4,            // moves the bot looks ahead (it always follows a run of jumps to the end)
+  botNoise: 30,           // random wobble in its scores (100 = a piece), so it isn't perfect
+  drawPlies: 80,          // this many moves in a row (both sides) without a jump or a man moving = draw
+  seatGraceMs: 10000,     // a seated player silent this long loses the seat to the bot
+  resultsMs: 30000,       // results show this long, then the next game starts (Play again starts it at once)
+  hintMs: 14000,          // the "tap a piece" hint shows this long
+  hopMs: 260,             // how long a piece takes for one step or jump
+  table: "#10261d", frame: "#4a2c1d", light: "#ecd9b4", dark: "#7a4e33",
+  pieces: ["#d8413a", "#f4ecdb"],   // red, white
+  sideNames: ["Red", "White"],
+  gold: "#ffcc4d",
+  botColor: "#8892b0",    // the bot's ring color (not in COLORS, so no player ever matches it)
+  board: "wins",          // leaderboard name
+  attractOpening: 22,     // ?attract starts each game this many random moves in ...
+  attractMaxPly: 60,      // ... and starts a new one after this many more
+};
+const COLORS = ["#ff6b6b", "#4dabf7", "#69db7c", "#b197fc", "#ff922b", "#f783ac", "#3bc9db", "#ffd43b"];
+const NAME_A = ["Swift", "Clever", "Bold", "Quiet", "Lucky", "Sly"], NAME_B = ["King", "Jumper", "Crown", "Checker", "Hopper"];
+
+// ── CONNECTION ──────────────────────────────────────────────────────────────────────
+// The builder fills these in for this game. Downloaded from GitHub? Put your own pk_ key here.
+const MP_CONNECT = {
+  key: 'pk_REPLACE_ME',
+  room: 'checkers',
+  endpoint: 'wss://live.multiplayeragent.com',
+  apiUrl: 'https://api.multiplayeragent.com',
+};
+const ATTRACT = new URLSearchParams(location.search).has("attract");
+
+/** Same shape as the SDK client, kept in this tab: offline play and ?attract. */
+function localRoom() {
+  const id = "local", state = { entities: { players: { [id]: {} } }, shared: {} }, subs = [];
+  let queued = false;
+  const emit = () => { if (!queued) { queued = true; queueMicrotask(() => { queued = false; subs.forEach((f) => f(state)); }); } };
+  const put = (o, k, v) => { if (typeof k === "object") Object.assign(o, k); else o[k] = v; emit(); };
+  return {
+    sessionId: id, state, offline: true,
+    me: { set: (k, v) => put(state.entities.players[id], k, v) },
+    setShared: (k, v) => put(state.shared, k, v),
+    onState: (f) => { subs.push(f); f(state); }, onJoin() {}, onLeave() {}, on() {}, send() {},
+    onDisconnect() {}, onReconnect() {}, leave: async () => {},
+  };
+}
+async function connect() {
+  if (ATTRACT || typeof MP === "undefined") return localRoom();
+  try {
+    const mp = await Promise.race([MP.join({ ...MP_CONNECT }), new Promise((_, no) => setTimeout(() => no(new Error("timed out")), 10000))]);
+    window.mp = mp; // the builder calls window.mp.leave() when the page closes
+    return mp;
+  } catch (e) {
+    console.warn("Playing offline:", e && e.message);
+    return localRoom();
+  }
+}
+const parse = (v, fb) => { if (typeof v !== "string") return fb; try { return JSON.parse(v); } catch { return fb; } };
+let net = null, S = { entities: { players: {} }, shared: {} };
+const seenHb = new Map(); // sessionId -> { hb, at } on OUR clock
+/** Players whose heartbeat moved in the last 3s (plus us), sorted by sessionId. */
+function livePlayers() {
+  const now = performance.now(), out = [];
+  for (const [id, p] of Object.entries(S.entities.players || {})) {
+    const s = seenHb.get(id);
+    if (!s || s.hb !== p.hb) seenHb.set(id, { hb: p.hb, at: now });
+    if (id === net.sessionId || now - seenHb.get(id).at < 3000) out.push(id);
+  }
+  return out.sort();
+}
+const isHost = () => livePlayers()[0] === net.sessionId;
+/** Still in the room and heard from within the seat grace time (a backgrounded phone keeps its seat). */
+const stillHere = (id) => id === net.sessionId || (!!S.entities.players[id] && performance.now() - (seenHb.get(id)?.at ?? -1e9) < CONFIG.seatGraceMs);
+
+// ── RULES ───────────────────────────────────────────────────────────────────────────
+// cells: 64 characters, row by row from the top as Red sees it (square = row * 8 + col).
+// "." empty, "r"/"R" a red man/king (seat 1), "w"/"W" a white man/king (seat 2). Pieces only
+// ever stand on the dark squares, where row + col is odd. Red starts at the bottom and moves up.
+const SIDES = ["r", "w"];
+const sideOf = (p) => (p === "r" || p === "R" ? 0 : p === "w" || p === "W" ? 1 : -1);
+const isKing = (p) => p === "R" || p === "W";
+const sq = (r, c) => r * 8 + c;
+const rowOf = (s) => s >> 3, colOf = (s) => s & 7;
+const onBoard = (r, c) => r >= 0 && r < 8 && c >= 0 && c < 8;
+const FORWARD = [-1, 1];               // the row direction each side's men move: red up, white down
+const kingRow = (side) => (side === 0 ? 0 : 7);
+const ALL_DIRS = [[-1, -1], [-1, 1], [1, -1], [1, 1]];
+const dirsOf = (p) => (isKing(p) ? ALL_DIRS : [[FORWARD[sideOf(p)], -1], [FORWARD[sideOf(p)], 1]]);
+function startCells() {
+  let out = "";
+  for (let r = 0; r < 8; r++) for (let c = 0; c < 8; c++) out += (r + c) % 2 && r < 3 ? "w" : (r + c) % 2 && r > 4 ? "r" : ".";
+  return out;
+}
+const isJump = (path) => Math.abs(rowOf(path[1]) - rowOf(path[0])) === 2;
+/** Every chain of jumps the piece `p` on square s can make (b = the board as an array). */
+function jumpsFrom(b, s, p, path, out) {
+  let more = false;
+  for (const [dr, dc] of dirsOf(p)) {
+    const r = rowOf(s), c = colOf(s), mid = sq(r + dr, c + dc), to = sq(r + 2 * dr, c + 2 * dc);
+    if (!onBoard(r + 2 * dr, c + 2 * dc) || sideOf(b[mid]) !== 1 - sideOf(p) || b[to] !== ".") continue;
+    more = true;
+    const nb = b.slice(); nb[s] = "."; nb[mid] = "x"; nb[to] = p; // "x": taken, can't be jumped twice
+    if (!isKing(p) && rowOf(to) === kingRow(sideOf(p))) out.push([...path, to]); // crowned: the move ends there
+    else jumpsFrom(nb, to, p, [...path, to], out);
+  }
+  if (!more && path.length > 1) out.push(path);
+}
+/** Every legal move for a side, each a list of squares. If any jump exists, only jumps are legal. */
+function legalMoves(cells, side) {
+  const b = [...cells], jumps = [], steps = [];
+  for (let s = 0; s < 64; s++) if (sideOf(b[s]) === side) jumpsFrom(b, s, b[s], [s], jumps);
+  if (jumps.length) return jumps;
+  for (let s = 0; s < 64; s++) {
+    if (sideOf(b[s]) !== side) continue;
+    for (const [dr, dc] of dirsOf(b[s])) if (onBoard(rowOf(s) + dr, colOf(s) + dc) && b[sq(rowOf(s) + dr, colOf(s) + dc)] === ".") steps.push([s, sq(rowOf(s) + dr, colOf(s) + dc)]);
+  }
+  return steps;
+}
+/** Make a move (a path from legalMoves). Returns { cells, caps: squares taken, crowned, man }. */
+function play(cells, path) {
+  const b = [...cells], p = b[path[0]], caps = [];
+  b[path[0]] = ".";
+  for (let i = 1; i < path.length; i++) if (isJump([path[i - 1], path[i]])) { const m = (path[i - 1] + path[i]) / 2; caps.push(m); b[m] = "."; }
+  const end = path[path.length - 1], crowned = !isKing(p) && rowOf(end) === kingRow(sideOf(p));
+  b[end] = crowned ? p.toUpperCase() : p;
+  return { cells: b.join(""), caps, crowned, man: !isKing(p) };
+}
+const samePath = (a, b) => Array.isArray(b) && a.length === b.length && a.every((x, i) => x === b[i]);
+const countOf = (cells, side) => [...cells].filter((p) => sideOf(p) === side).length;
+
+// ── BOT ─────────────────────────────────────────────────────────────────────────────
+/** + is good for `side`: pieces (kings more), men pushing forward, a guarded back row, the middle. */
+function evaluate(cells, side) {
+  let s = 0;
+  for (let i = 0; i < 64; i++) {
+    const p = cells[i], ps = sideOf(p);
+    if (ps < 0) continue;
+    const r = rowOf(i), c = colOf(i), adv = ps === 0 ? 7 - r : r; // rows from home
+    let v = isKing(p) ? 170 : 100 + adv * 4 + (adv === 0 ? 8 : 0);
+    if (c >= 2 && c <= 5 && r >= 2 && r <= 5) v += 6;
+    s += ps === side ? v : -v;
+  }
+  return s;
+}
+function negamax(cells, side, depth, alpha, beta, ply) {
+  const moves = legalMoves(cells, side);
+  if (!moves.length) return -100000 + ply; // no moves: lost
+  if (depth <= 0 && (!isJump(moves[0]) || depth < -6)) return evaluate(cells, side); // keep going while jumps are forced
+  for (const m of moves) {
+    const v = -negamax(play(cells, m).cells, 1 - side, depth - 1, -beta, -alpha, ply + 1);
+    if (v >= beta) return v;
+    if (v > alpha) alpha = v;
+  }
+  return alpha;
+}
+function botMove(cells, side) {
+  let best = null, bestScore = -Infinity;
+  for (const m of legalMoves(cells, side)) {
+    const s = -negamax(play(cells, m).cells, 1 - side, CONFIG.botDepth - 1, -Infinity, Infinity, 1) + Math.random() * CONFIG.botNoise;
+    if (s > bestScore) { bestScore = s; best = m; }
+  }
+  return best;
+}
+
+// ── GAME (HOST) ─────────────────────────────────────────────────────────────────────
+const host = { last: null };
+const gameMemo = { raw: undefined, g: null };
+/** The game as state has it, or the host's own newer write that hasn't come back yet. */
+function game() {
+  if (gameMemo.raw !== S.shared.game) { gameMemo.raw = S.shared.game; gameMemo.g = parse(S.shared.game, null); }
+  const g = gameMemo.g;
+  return host.last && isHost() && (!g || host.last.v > g.v) ? host.last : g;
+}
+function writeGame(g) { g = { ...g, v: (game()?.v ?? 0) + 1 }; host.last = g; net.setShared("game", JSON.stringify(g)); return g; }
+/** Whose turn: 0 (red) or 1 (white). Seat `first` moves first. */
+const turnOf = (g) => (g.first + g.ply) % 2;
+function freshGame(id, seats, first, score) {
+  const g = { id, cells: startCells(), first, ply: 0, last: [], seats, score: score || {}, quiet: 0, at: Date.now(), res: "", why: "", endsAt: 0 };
+  if (ATTRACT) attractOpening(g);
+  return g;
+}
+/** ?attract only: random (legal) opening moves, so the preview starts mid-game with kings close. */
+function attractOpening(g) {
+  for (let i = 0; i < CONFIG.attractOpening; i++) {
+    const moves = legalMoves(g.cells, turnOf(g));
+    if (moves.length < 2) break;
+    g.cells = play(g.cells, moves[Math.floor(Math.random() * moves.length)]).cells;
+    g.first = 1 - g.first; // the other side is to move (ply stays 0)
+  }
+}
+
+/** Gone players lose their seat to the bot; waiting players take a bot's seat. */
+function fixSeats(g) {
+  if (ATTRACT) return g;
+  const seats = [...g.seats], waiting = livePlayers().filter((id) => !seats.includes(id));
+  for (let s = 0; s < 2; s++) if (seats[s] !== "bot" && !stillHere(seats[s])) seats[s] = "bot";
+  for (let s = 0; s < 2; s++) if (seats[s] === "bot" && waiting.length) seats[s] = waiting.shift();
+  return seats[0] === g.seats[0] && seats[1] === g.seats[1] ? g : writeGame({ ...g, seats });
+}
+function endGame(g, res, why) {
+  const out = { ...g, res, why, endsAt: Date.now() + CONFIG.resultsMs };
+  if (res !== "d") { const who = g.seats[SIDES.indexOf(res)]; out.score = { ...g.score, [who]: (g.score[who] || 0) + 1 }; }
+  return out;
+}
+/** Check a move against the rules and write the new position (and the result, if it ends the game). */
+function applyMove(g, path) {
+  const side = turnOf(g), mv = legalMoves(g.cells, side).find((m) => samePath(m, path));
+  if (!mv) return false; // illegal: refused
+  const r = play(g.cells, mv), quiet = r.caps.length || r.man ? 0 : g.quiet + 1;
+  let out = { ...g, cells: r.cells, ply: g.ply + 1, last: mv, quiet, at: Date.now() };
+  if (!legalMoves(r.cells, 1 - side).length) out = endGame(out, SIDES[side], countOf(r.cells, 1 - side) ? `${CONFIG.sideNames[1 - side]} can't move` : `Every ${CONFIG.sideNames[1 - side].toLowerCase()} piece taken`);
+  else if (quiet >= CONFIG.drawPlies) out = endGame(out, "d", `${CONFIG.drawPlies / 2} moves each without a jump`);
+  writeGame(out);
+  return true;
+}
+/** A "move" intent (or the host's own): only from the seat whose turn it is, on this exact ply. */
+function hostMove(from, m) {
+  const g = game();
+  if (!g || g.res || m.g !== g.id || m.ply !== g.ply || g.seats[turnOf(g)] !== from) return;
+  applyMove(g, m.p);
+}
+function hostResign(from, m) {
+  const g = game(), side = g ? g.seats.indexOf(from) : -1;
+  if (g && !g.res && m.g === g.id && side >= 0) writeGame(endGame(g, SIDES[1 - side], `${CONFIG.sideNames[side]} resigned`));
+}
+/** The next game: the other side starts; after a win, a waiting player takes the loser's seat. */
+function nextGame(g) {
+  const seats = [...g.seats], waiting = livePlayers().filter((id) => !seats.includes(id));
+  if (!ATTRACT && g.res && g.res !== "d" && waiting.length) seats[1 - SIDES.indexOf(g.res)] = waiting[0];
+  const keep = new Set([...seats, ...livePlayers(), "bot"]), score = {};
+  for (const [id, n] of Object.entries(g.score || {})) if (keep.has(id)) score[id] = n;
+  return writeGame(freshGame(g.id + 1, seats, 1 - g.first, score));
+}
+function hostAgain(from, m) {
+  const g = game();
+  if (g && g.res && m.g === g.id && g.seats.includes(from)) nextGame(g);
+}
+function hostTick() {
+  let g = game();
+  if (!g) g = writeGame(freshGame(1, ATTRACT ? ["bot", "bot"] : [net.sessionId, "bot"], 0));
+  g = fixSeats(g);
+  if (g.res) { if (Date.now() > g.endsAt) nextGame(g); return; }
+  if (ATTRACT && g.ply >= CONFIG.attractMaxPly) { nextGame(g); return; }
+  if (g.seats[turnOf(g)] === "bot" && Date.now() > g.at + CONFIG.botThinkMs) {
+    const m = botMove(g.cells, turnOf(g));
+    if (m) applyMove(g, m);
+  }
+}
+
+// ── PIECES ──────────────────────────────────────────────────────────────────────────
+// The pieces as drawn: { sq, p, anim, dieAt, dead, crownAt, popAt }. Positions are in board
+// squares (col, row as red sees it), turned into pixels when drawn.
+const view = { id: -1, cells: "", pieces: [], flip: false };
+const parts = [];
+const ease = (k) => (k < 0.5 ? 2 * k * k : 1 - (-2 * k + 2) ** 2 / 2);
+function rebuild(cells, now, popIn) {
+  view.pieces = [];
+  for (let s = 0; s < 64; s++) if (cells[s] !== ".") view.pieces.push({ sq: s, p: cells[s], popAt: popIn ? now + (sideOf(cells[s]) === 0 ? 63 - s : s) * 14 : 0 });
+}
+function syncBoard(g, now) {
+  view.flip = mySeat(g) === 1;
+  const cells = shownCells(g), path = pending ? pending.path : g.last;
+  if (view.id !== g.id) {
+    if (view.id >= 0 && mySeat(g) >= 0) toast(turnOf(g) === mySeat(g) ? "New game · you go first" : "New game · they go first");
+    view.id = g.id; view.cells = cells; closedFor = -1; pending = null; clearSel();
+    rebuild(cells, now, true);
+    return;
+  }
+  if (cells === view.cells) return;
+  const mover = path && path.length > 1 && view.pieces.find((pc) => pc.sq === path[0] && !pc.dieAt);
+  if (mover && sideOf(view.cells[path[0]]) >= 0 && play(view.cells, path).cells === cells) animateMove(mover, path, now);
+  else rebuild(cells, now, false); // anything unexpected: just show the new board
+  view.cells = cells;
+  clearSel();
+}
+function animateMove(pc, path, now) {
+  pc.anim = { path, t0: now, hop: -1 }; pc.sq = path[path.length - 1];
+  for (let i = 1; i < path.length; i++) {
+    if (!isJump([path[i - 1], path[i]])) continue;
+    const taken = view.pieces.find((x) => x.sq === (path[i - 1] + path[i]) / 2 && !x.dieAt);
+    if (taken) taken.dieAt = now + CONFIG.hopMs * (i - 0.5);
+  }
+  if (!isKing(pc.p) && rowOf(pc.sq) === kingRow(sideOf(pc.p))) pc.crownAt = now + CONFIG.hopMs * (path.length - 1);
+}
+/** Where a piece is right now: [col, row, lift] in board squares. */
+function piecePos(pc, now) {
+  if (!pc.anim) return [colOf(pc.sq), rowOf(pc.sq), 0];
+  const { path, t0 } = pc.anim, t = (now - t0) / CONFIG.hopMs, k = Math.max(0, Math.min(path.length - 2, Math.floor(t)));
+  const u = Math.max(0, Math.min(1, t - k)), e = ease(u), a = path[k], b = path[k + 1];
+  return [colOf(a) + (colOf(b) - colOf(a)) * e, rowOf(a) + (rowOf(b) - rowOf(a)) * e, Math.sin(u * Math.PI) * (isJump([a, b]) ? 0.5 : 0.12)];
+}
+function stepPieces(dt, now) {
+  for (const pc of view.pieces) {
+    if (pc.anim) {
+      const hop = Math.floor((now - pc.anim.t0) / CONFIG.hopMs);
+      if (hop > pc.anim.hop && hop >= 1) { pc.anim.hop = hop; sound("tok"); }
+      if (now - pc.anim.t0 >= CONFIG.hopMs * (pc.anim.path.length - 1)) pc.anim = null;
+    }
+    if (pc.crownAt && now >= pc.crownAt) { pc.crownAt = 0; pc.p = pc.p.toUpperCase(); pc.crownPop = now; sound("crown"); burst(pc.sq, CONFIG.gold, 26); }
+    if (pc.dieAt && !pc.dead && now >= pc.dieAt) { pc.dead = now; sound("take"); burst(pc.sq, CONFIG.pieces[sideOf(pc.p)], 18); }
+  }
+  view.pieces = view.pieces.filter((pc) => !pc.dead || now - pc.dead < 260);
+  for (let i = parts.length - 1; i >= 0; i--) {
+    const q = parts[i];
+    q.life -= dt; q.vy += q.g * dt; q.x += q.vx * dt; q.y += q.vy * dt; q.spin += dt * 9;
+    if (q.life <= 0) parts.splice(i, 1);
+  }
+}
+/** Sparks from a square, in screen pixels. */
+function burst(s, color, n) {
+  const [x, y] = sqXY(s);
+  for (let i = 0; i < n; i++) {
+    const a = Math.random() * Math.PI * 2, v = 60 + Math.random() * 220;
+    parts.push({ x, y, vx: Math.cos(a) * v, vy: Math.sin(a) * v - 80, g: 420, life: 0.5 + Math.random() * 0.5, size: 3 + Math.random() * 4, color, spin: Math.random() * 6 });
+  }
+}
+let actx = null; // sounds start after the first tap or key (browsers require it)
+function unlockAudio() { if (!actx) try { actx = new AudioContext(); } catch {} }
+function sound(kind) {
+  if (!actx || ATTRACT) return;
+  const t = actx.currentTime, o = actx.createOscillator(), g = actx.createGain();
+  const [type, f0, f1, len] = { tok: ["triangle", 300, 120, 0.1], take: ["square", 180, 60, 0.16], crown: ["sine", 660, 1320, 0.4], win: ["sine", 520, 1040, 0.5] }[kind];
+  o.type = type; o.frequency.setValueAtTime(f0, t); o.frequency.exponentialRampToValueAtTime(f1, t + len * 0.8);
+  g.gain.setValueAtTime(kind === "take" ? 0.12 : 0.22, t); g.gain.exponentialRampToValueAtTime(0.001, t + len);
+  o.connect(g).connect(actx.destination); o.start(t); o.stop(t + len + 0.05);
+}
+
+// ── DRAW ────────────────────────────────────────────────────────────────────────────
+const cv = document.getElementById("game"), ctx = cv.getContext("2d");
+let W = 0, H = 0, DPR = 1;
+const L = { bs: 40, bx: 0, by: 0 }; // square size, board top-left
+function fit() {
+  DPR = Math.min(2, devicePixelRatio || 1); W = innerWidth; H = innerHeight; cv.width = W * DPR; cv.height = H * DPR;
+  const top = ATTRACT ? 14 : 104, bottom = ATTRACT ? 14 : 92; // room kept for the HUD
+  L.bs = Math.max(24, Math.min((W - 28) / 8.5, (H - top - bottom) / 8.5));
+  L.bx = (W - L.bs * 8) / 2; L.by = top + (H - top - bottom - L.bs * 8) / 2;
+}
+addEventListener("resize", fit); addEventListener("orientationchange", fit); fit();
+/** Board squares (col, row) to pixels, turned around for the white player. */
+function toXY(c, r) { if (view.flip) { c = 7 - c; r = 7 - r; } return [L.bx + (c + 0.5) * L.bs, L.by + (r + 0.5) * L.bs]; }
+const sqXY = (s) => toXY(colOf(s), rowOf(s));
+function sqAt(x, y) {
+  let c = Math.floor((x - L.bx) / L.bs), r = Math.floor((y - L.by) / L.bs);
+  if (!onBoard(r, c)) return -1;
+  if (view.flip) { c = 7 - c; r = 7 - r; }
+  return sq(r, c);
+}
+function shade(hex, k) { // k > 0 lightens toward white, k < 0 darkens toward black
+  const n = parseInt(hex.slice(1), 16), t = k > 0 ? 255 : 0, a = Math.abs(k);
+  const ch = (s) => Math.round(((n >> s) & 255) * (1 - a) + t * a);
+  return `rgb(${ch(16)},${ch(8)},${ch(0)})`;
+}
+function drawPiece(x, y, p, lift, scale, alpha, crownK) {
+  const r = L.bs * 0.38 * scale, col = CONFIG.pieces[sideOf(p)], h = L.bs * 0.07 * scale, up = lift * L.bs;
+  ctx.globalAlpha = alpha;
+  ctx.fillStyle = "#0000004d"; ctx.beginPath(); ctx.ellipse(x + up * 0.15, y + h * 1.2, r * (1 + lift * 0.3), r * 0.92 * (1 + lift * 0.3), 0, 0, Math.PI * 2); ctx.fill(); // shadow
+  y -= up;
+  const stack = isKing(p) ? 2 : 1;
+  for (let k = 0; k < stack; k++) {
+    const yy = y - k * h * 1.6;
+    ctx.fillStyle = shade(col, -0.35); ctx.beginPath(); ctx.arc(x, yy + h, r, 0, Math.PI * 2); ctx.fill(); // the edge
+    const g = ctx.createRadialGradient(x - r * 0.35, yy - r * 0.4, r * 0.1, x, yy, r);
+    g.addColorStop(0, shade(col, 0.4)); g.addColorStop(0.6, col); g.addColorStop(1, shade(col, -0.15));
+    ctx.fillStyle = g; ctx.beginPath(); ctx.arc(x, yy, r, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = shade(col, -0.2); ctx.lineWidth = r * 0.08;
+    ctx.beginPath(); ctx.arc(x, yy, r * 0.72, 0, Math.PI * 2); ctx.stroke();
+    ctx.beginPath(); ctx.arc(x, yy, r * 0.48, 0, Math.PI * 2); ctx.stroke();
+  }
+  if (isKing(p)) drawCrown(x, y - h * 1.6, r * 0.62 * (crownK || 1));
+  ctx.globalAlpha = 1;
+}
+function drawCrown(x, y, s) {
+  ctx.fillStyle = CONFIG.gold; ctx.strokeStyle = "#7a5200"; ctx.lineWidth = s * 0.1;
+  ctx.beginPath();
+  ctx.moveTo(x - s, y + s * 0.45); ctx.lineTo(x - s, y - s * 0.35); ctx.lineTo(x - s * 0.5, y + s * 0.05); ctx.lineTo(x, y - s * 0.6);
+  ctx.lineTo(x + s * 0.5, y + s * 0.05); ctx.lineTo(x + s, y - s * 0.35); ctx.lineTo(x + s, y + s * 0.45); ctx.closePath();
+  ctx.fill(); ctx.stroke();
+}
+function draw(g, now) {
+  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  const bg = ctx.createRadialGradient(W / 2, H / 2, 0, W / 2, H / 2, Math.max(W, H) * 0.7);
+  bg.addColorStop(0, "#1f4a37"); bg.addColorStop(1, CONFIG.table);
+  ctx.fillStyle = bg; ctx.fillRect(0, 0, W, H);
+  const { bs, bx, by } = L, size = bs * 8, fr = bs * 0.28;
+  ctx.fillStyle = "#00000055"; ctx.beginPath(); ctx.roundRect(bx - fr + 6, by - fr + 10, size + fr * 2, size + fr * 2, fr); ctx.fill();
+  ctx.fillStyle = CONFIG.frame; ctx.beginPath(); ctx.roundRect(bx - fr, by - fr, size + fr * 2, size + fr * 2, fr); ctx.fill();
+  ctx.strokeStyle = "#ffffff22"; ctx.lineWidth = 2; ctx.stroke();
+  for (let r = 0; r < 8; r++) for (let c = 0; c < 8; c++) { ctx.fillStyle = (r + c) % 2 ? CONFIG.dark : CONFIG.light; ctx.fillRect(bx + c * bs, by + r * bs, bs + 0.5, bs + 0.5); }
+  if (!g) return;
+  // the last move: its squares tinted gold
+  const last = pending ? pending.path : g.last;
+  if (last && last.length > 1 && !sel) for (const s of last) {
+    const [x, y] = sqXY(s);
+    ctx.fillStyle = "#ffd25e40"; ctx.fillRect(x - bs / 2, y - bs / 2, bs, bs);
+    ctx.strokeStyle = "#ffd25eaa"; ctx.lineWidth = 2; ctx.strokeRect(x - bs / 2 + 2, y - bs / 2 + 2, bs - 4, bs - 4);
+  }
+  drawHints(g, now);
+  // the pieces, lifted ones on top
+  const list = view.pieces.map((pc) => {
+    let [c, r, lift] = piecePos(pc, now), alpha = 1, scale = 1;
+    if (sel && pc.sq === sel.path[0] && !pc.anim) { [c, r] = [colOf(sel.path[sel.path.length - 1]), rowOf(sel.path[sel.path.length - 1])]; lift = 0.18 + Math.sin(now / 180) * 0.04; }
+    if (sel && sel.path.length > 1 && takenSoFar().includes(pc.sq)) alpha = 0.35;
+    if (pc.popAt) { const k = (now - pc.popAt) / 320; if (k < 0) return null; if (k < 1) scale = 1 + Math.sin(k * Math.PI) * 0.25 - (1 - k) * 0.6; else pc.popAt = 0; }
+    if (pc.dead) { const k = (now - pc.dead) / 260; scale = 1 - k; alpha = 1 - k; }
+    const crownK = pc.crownPop && now - pc.crownPop < 400 ? 1 + Math.sin(((now - pc.crownPop) / 400) * Math.PI) * 0.6 : 1;
+    return { pc, c, r, lift, alpha, scale: Math.max(0.01, scale), crownK };
+  }).filter(Boolean).sort((a, b) => a.lift - b.lift);
+  for (const d of list) { const [x, y] = toXY(d.c, d.r); drawPiece(x, y, d.pc.p, d.lift, d.scale, d.alpha, d.crownK); }
+  for (const q of parts) {
+    ctx.globalAlpha = Math.min(1, q.life * 2); ctx.fillStyle = q.color;
+    ctx.save(); ctx.translate(q.x, q.y); ctx.rotate(q.spin); ctx.fillRect(-q.size / 2, -q.size / 2, q.size, q.size); ctx.restore();
+  }
+  ctx.globalAlpha = 1;
+}
+/** My turn: rings on pieces that must jump, the selected piece's landing dots. */
+function drawHints(g, now) {
+  if (!myTurn(g)) return;
+  const legal = myLegal(g), bs = L.bs, pulse = 0.55 + Math.sin(now / 150) * 0.35;
+  if (!sel && legal.length && isJump(legal[0])) {
+    ctx.strokeStyle = CONFIG.gold; ctx.lineWidth = 3; ctx.globalAlpha = now - flashAt < 1200 ? 1 : pulse * 0.8;
+    for (const s of new Set(legal.map((m) => m[0]))) { const [x, y] = sqXY(s); ctx.beginPath(); ctx.arc(x, y, bs * 0.46, 0, Math.PI * 2); ctx.stroke(); }
+    ctx.globalAlpha = 1;
+  }
+  if (!sel) return;
+  const [sx, sy] = sqXY(sel.path[sel.path.length - 1]);
+  ctx.fillStyle = "#7bed9f55"; ctx.fillRect(sx - bs / 2, sy - bs / 2, bs, bs);
+  for (const s of nextSteps(g)) {
+    const [x, y] = sqXY(s);
+    ctx.fillStyle = "#0e2a1c99"; ctx.beginPath(); ctx.arc(x, y, bs * 0.15, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = "#7bed9f"; ctx.globalAlpha = pulse; ctx.lineWidth = 3; ctx.beginPath(); ctx.arc(x, y, bs * 0.22, 0, Math.PI * 2); ctx.stroke(); ctx.globalAlpha = 1;
+  }
+}
+
+// ── MY MOVES ────────────────────────────────────────────────────────────────────────
+let sel = null, pending = null, flashAt = -1e9, hintUntil = performance.now() + CONFIG.hintMs;
+const legalMemo = { cells: "", side: -1, moves: [] };
+const mySeat = (g) => g.seats.indexOf(net.sessionId);
+const myTurn = (g) => !g.res && !pending && turnOf(g) === mySeat(g);
+function myLegal(g) {
+  if (legalMemo.cells !== g.cells || legalMemo.side !== turnOf(g)) Object.assign(legalMemo, { cells: g.cells, side: turnOf(g), moves: legalMoves(g.cells, turnOf(g)) });
+  return legalMemo.moves;
+}
+const clearSel = () => { sel = null; };
+const startsWith = (m, pre) => m.length >= pre.length && pre.every((x, i) => m[i] === x);
+/** The squares the selected piece can land on next. */
+const nextSteps = (g) => [...new Set(myLegal(g).filter((m) => startsWith(m, sel.path) && m.length > sel.path.length).map((m) => m[sel.path.length]))];
+/** Pieces already jumped in a multi-jump that is still being picked. */
+function takenSoFar() { const out = []; for (let i = 1; i < sel.path.length; i++) if (isJump([sel.path[i - 1], sel.path[i]])) out.push((sel.path[i - 1] + sel.path[i]) / 2); return out; }
+/** What the board shows: the game in state, or my move while it is on its way to the host. */
+function shownCells(g) {
+  if (pending && (pending.cells !== g.cells || performance.now() - pending.at > 4000)) pending = null;
+  return pending ? pending.next : g.cells;
+}
+function tapSquare(s) {
+  const g = game();
+  if (!g || !myTurn(g) || s < 0) return clearSel();
+  const legal = myLegal(g), side = mySeat(g);
+  if (sel) {
+    const ways = legal.filter((m) => startsWith(m, [...sel.path, s]));
+    if (ways.length === 1) return sendMove(ways[0]);          // only one way on: play it all (multi-jumps too)
+    if (ways.length > 1) { sel.path.push(s); return; }          // a fork in a multi-jump: pick the next landing
+    if (sel.path.length > 1) { if (s === sel.path[0]) clearSel(); return; } // mid-jump: finish it, or tap the start to undo
+  }
+  if (sideOf(g.cells[s]) === side) {
+    if (legal.some((m) => m[0] === s)) { sel = { path: [s] }; return; }
+    flashAt = performance.now();
+    toast(isJump(legal[0]) ? "Jumps are forced: tap a glowing piece" : "That piece can't move yet");
+  }
+  clearSel();
+}
+function sendMove(path) {
+  const g = game(), msg = { g: g.id, ply: g.ply, p: path };
+  hintUntil = 0; clearSel();
+  if (isHost()) return hostMove(net.sessionId, msg);
+  net.send("move", msg);
+  pending = { cells: g.cells, next: play(g.cells, path).cells, path, at: performance.now() }; // shown until the host answers
+}
+
+// ── HUD & RESULTS ───────────────────────────────────────────────────────────────────
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+const nameOf = (id) => (id === "bot" ? CONFIG.botName : id === net.sessionId ? myName : String(S.entities.players[id]?.n || "Player"));
+const colorOf = (id) => (id === "bot" ? CONFIG.botColor : id === net.sessionId ? myColor : S.entities.players[id]?.c || "#ccc");
+let toastAt = 0, dropped = false, resultsFor = -1, closedFor = -1, cardAt = 0, board = null, seatsSeen = null, resign = 0;
+function toast(text) { $("toast").textContent = text; $("toast").style.opacity = 1; toastAt = performance.now(); }
+function bar(el, s, g) {
+  const id = g.seats[s], tag = id === "bot" ? "bot" : id === net.sessionId ? "you" : "", left = countOf(view.cells || g.cells, s);
+  el.className = "bar" + (!g.res && turnOf(g) === s ? " turn" : "");
+  el.style.setProperty("--p", colorOf(id));
+  const html = `<span class="sw" style="background:${CONFIG.pieces[s]}"></span><span class="nm">${esc(nameOf(id))}</span><span class="tag">${tag}</span>` +
+    `<span class="left">${left} left</span><span class="pts">${g.score?.[id] ? "★" + g.score[id] : ""}</span>`;
+  if (el.dataset.html !== html) { el.dataset.html = html; el.innerHTML = html; }
+}
+function hud(g) {
+  const now = performance.now(), side = mySeat(g), turnId = g.seats[turnOf(g)], bottom = side === 1 ? 1 : 0;
+  if (now - toastAt > 3000) $("toast").style.opacity = 0;
+  // results card, once the last move (and its captures) has finished on screen
+  if (g.res && resultsFor !== g.id && !view.pieces.some((pc) => pc.anim || (pc.dieAt && !pc.dead))) { resultsFor = g.id; cardAt = now + 900; showResults(g, side); }
+  if (ATTRACT) { for (const id of ["top", "bottom", "status", "watch", "net"]) $(id).classList.add("hide"); return; }
+  bar($("bottom"), bottom, g); bar($("top"), 1 - bottom, g);
+  const prev = seatsSeen; // someone took over from the bot, or the bot took over
+  seatsSeen = { id: g.id, seats: [...g.seats] };
+  if (prev && prev.id === g.id) for (const s of [0, 1]) if (prev.seats[s] !== g.seats[s]) toast(`${g.seats[s] === net.sessionId ? "You" : nameOf(g.seats[s])} took over ${CONFIG.sideNames[s].toLowerCase()}`);
+  const forced = myTurn(g) && myLegal(g).length && isJump(myLegal(g)[0]);
+  $("status").textContent = g.res ? (g.res === "d" ? "Draw" : `${nameOf(g.seats[SIDES.indexOf(g.res)])} wins`) + ` · ${g.why}`
+    : pending ? "Sending your move…"
+    : side === turnOf(g) ? (sel && sel.path.length > 1 ? "Keep jumping!" : forced ? "You must jump!" : "Your move") + (now < hintUntil && !sel ? " · tap a piece, then a dot" : "")
+    : turnId === "bot" ? `${CONFIG.botName} is thinking…`
+    : side >= 0 ? `${nameOf(turnId)}'s move` : `You're watching · ${CONFIG.sideNames[turnOf(g)]} to move`;
+  const watchers = livePlayers().filter((id) => !g.seats.includes(id));
+  $("watch").textContent = watchers.length ? "Watching: " + watchers.map((id) => (id === net.sessionId ? "you" : nameOf(id))).join(", ") : "";
+  const act = $("act"); // resign during the game, play again after it
+  act.hidden = side < 0 || (g.res && closedFor !== g.id);
+  if (g.res) { act.textContent = "Play again"; act.className = "go"; }
+  else { act.textContent = now - resign < 3000 ? "Tap to confirm" : "Resign"; act.className = now - resign < 3000 ? "warn" : ""; }
+  $("over").hidden = !g.res || resultsFor !== g.id || now < cardAt || closedFor === g.id;
+  if (g.res) $("next").textContent = `Next game in ${Math.max(0, Math.ceil((g.endsAt - Date.now()) / 1000))}s`;
+  const n = livePlayers().length;
+  $("net").textContent = net.offline ? "Offline: playing with bots" : dropped ? "Reconnecting…" : `Online · ${n} player${n === 1 ? "" : "s"}${isHost() ? " · you run the game" : ""}`;
+}
+function showResults(g, side) {
+  const winSide = SIDES.indexOf(g.res), won = side >= 0 && winSide === side;
+  $("overTitle").textContent = g.res === "d" ? "Draw" : won ? "You win!" : side >= 0 ? "You lose" : `${nameOf(g.seats[winSide])} wins`;
+  $("overWhy").textContent = `${g.why}. ${nameOf(g.seats[0])} ${g.score?.[g.seats[0]] || 0} · ${g.score?.[g.seats[1]] || 0} ${nameOf(g.seats[1])}`;
+  $("again").classList.toggle("hide", side < 0);
+  if (won || ATTRACT) for (let i = 0; i < 4; i++) burst(sq(3 + (i >> 1), 3 + (i & 1)), [CONFIG.gold, CONFIG.pieces[winSide] || "#fff"][i & 1], 30);
+  if (won) sound("win");
+  const list = $("board");
+  if (!board) { list.innerHTML = "<li>Leaderboards need a connection.</li>"; return; }
+  list.innerHTML = "<li>Loading…</li>";
+  (won ? board.submit(1, "inc").catch(() => null) : Promise.resolve()).then(() => board.top(10)).then(({ entries }) => {
+    list.innerHTML = entries.length ? entries.map((e) => `<li>${esc(e.username || "Player")}<span>${e.score}</span></li>`).join("") : "<li>No wins yet. Be the first.</li>";
+  }).catch(() => { list.innerHTML = "<li>Couldn't load the leaderboard.</li>"; });
+}
+function playAgain() { const g = game(); if (!g || !g.res) return; const msg = { g: g.id }; if (isHost()) hostAgain(net.sessionId, msg); else net.send("again", msg); }
+$("again").onclick = playAgain;
+$("look").onclick = () => { closedFor = game()?.id ?? -1; };
+$("act").onclick = () => {
+  const g = game();
+  if (!g) return;
+  if (g.res) return playAgain();
+  if (performance.now() - resign > 3000) { resign = performance.now(); return; }
+  resign = 0;
+  if (isHost()) hostResign(net.sessionId, { g: g.id }); else net.send("resign", { g: g.id });
+};
+
+// ── INPUT / LOOP ────────────────────────────────────────────────────────────────────
+let downSq = -1;
+cv.addEventListener("pointerdown", (e) => { e.preventDefault(); unlockAudio(); downSq = sqAt(e.clientX, e.clientY); tapSquare(downSq); });
+addEventListener("pointerup", (e) => { // drag a piece onto a dot works too
+  const s = sqAt(e.clientX, e.clientY);
+  if (downSq >= 0 && s >= 0 && s !== downSq && sel) tapSquare(s);
+  downSq = -1;
+});
+addEventListener("keydown", (e) => { unlockAudio(); if (e.key === "Escape") clearSel(); });
+document.addEventListener("touchmove", (e) => e.preventDefault(), { passive: false });
+
+let myName = "", myColor = COLORS[0], last = performance.now(), lastHb = 0, lastHud = 0;
+try { myName = localStorage.getItem("mpa-name") || ""; } catch {}
+const pickOne = (list) => list[Math.floor(Math.random() * list.length)];
+if (!myName) { myName = pickOne(NAME_A) + " " + pickOne(NAME_B); try { localStorage.setItem("mpa-name", myName); } catch {} }
+if (ATTRACT) { Object.assign(CONFIG, { botThinkMs: 380, hopMs: 200, resultsMs: 2500, botDepth: 3, botNoise: 70 }); $("net").textContent = ""; }
+/** Two people joined at once with one color: the one with the higher sessionId picks a free one. */
+function fixColor() {
+  const others = Object.entries(S.entities.players || {}).filter(([id]) => id !== net.sessionId);
+  if (!others.some(([id, p]) => p.c === myColor && id < net.sessionId) && myColor !== CONFIG.botColor) return;
+  const taken = new Set([...others.map(([, p]) => p.c), CONFIG.botColor]), free = COLORS.find((c) => !taken.has(c));
+  if (free) { myColor = free; net.me.set("c", free); }
+}
+
+function frame(now) {
+  const dt = Math.max(0, Math.min(0.05, (now - last) / 1000)); last = now; // the first frame can be stamped before `last`
+  if (now - lastHb > 1000) { lastHb = now; net.me.set("hb", Date.now()); fixColor(); }
+  if (isHost()) hostTick();
+  const g = game();
+  if (g) {
+    syncBoard(g, now);
+    if (now - lastHud > 100) { lastHud = now; hud(g); }
+  }
+  stepPieces(dt, now);
+  draw(g, now);
+  requestAnimationFrame(frame);
+}
+
+(async function start() {
+  net = await connect();
+  net.onState((st) => { S = st; });
+  net.on("move", (m, from) => { if (isHost() && m) hostMove(from, m); });
+  net.on("resign", (m, from) => { if (isHost() && m) hostResign(from, m); });
+  net.on("again", (m, from) => { if (isHost() && m) hostAgain(from, m); });
+  net.onDisconnect(() => { dropped = true; $("net").textContent = "Reconnecting…"; });
+  net.onReconnect(() => { dropped = false; });
+  if (!net.offline && typeof MP !== "undefined") board = MP.auth({ key: MP_CONNECT.key, apiUrl: MP_CONNECT.apiUrl }).leaderboard(CONFIG.board);
+  const takenColors = new Set(Object.entries(S.entities.players || {}).filter(([id]) => id !== net.sessionId).map(([, p]) => p.c));
+  myColor = COLORS.find((c) => !takenColors.has(c)) || pickOne(COLORS);
+  net.me.set({ n: myName, c: myColor, hb: Date.now() });
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>
